@@ -1,25 +1,41 @@
 # 金属製品自動切り抜きツール
 
-Photoshop AI（Adobe Sensei）を使用した高精度背景除去ツール。
+Photoshop AI（Adobe Sensei）を使用した高精度背景除去・背景色追加ツール。
 
 ## 🚀 使い方
+
+### ステップ1: AI背景マスク作成
 
 ```bash
 # 1. 画像を配置
 cp /path/to/images/* ./images/
 
-# 2. AI自動処理実行
+# 2. AI自動マスク処理実行（PSDファイル出力）
 ./run-ai.sh
+```
+
+### ステップ2: 背景色追加（対話形式）
+
+```bash
+# 1. PSDファイルを配置
+cp ./output/*.psd ./bg_color_input/
+
+# 2. 背景色追加実行（対話形式で色選択）
+./run-bg-color.sh
 ```
 
 ## ファイル構成
 
 ```
 kirinuki/
-├── images/              # 入力画像フォルダ
-├── output/              # 出力画像フォルダ（透明PNG）
-├── run-ai.sh           # 実行スクリプト
-└── photoshop-ai-remove.jsx  # AI背景削除スクリプト
+├── images/                    # 入力画像フォルダ
+├── output/                    # マスク付きPSDファイル出力
+├── bg_color_input/           # 背景色追加用入力フォルダ
+├── bg_color_output/          # 背景色付きPSDファイル出力
+├── run-ai.sh                 # AI背景マスク作成スクリプト
+├── run-bg-color.sh          # 背景色追加スクリプト
+├── photoshop-ai-remove.jsx  # AI背景マスク作成スクリプト
+└── photoshop-bg-color.jsx   # 背景色追加スクリプト
 ```
 
 ## 動作環境
@@ -50,10 +66,17 @@ ls /Applications | grep Photoshop
 
 ## 特徴
 
+### AI背景マスク作成
 ✅ **Photoshop AI使用**で商用レベルの品質  
-✅ **完全自動処理** - コマンド1つで全画像を処理  
-✅ **高速処理** - AI機能により高速化  
+✅ **非破壊編集** - 元レイヤーを保持したマスク作成  
+✅ **PSD形式出力** - レイヤー構造を維持  
 ✅ **金属特化** - 反射や影も適切に処理
+
+### 背景色追加
+✅ **対話形式選択** - 白、ライトグレー、カスタム色対応  
+✅ **レイヤー保持** - 既存のマスクとレイヤーを維持  
+✅ **バッチ処理** - 複数ファイルを一括処理  
+✅ **安全なファイル名** - 自動的に適切なファイル名を生成
 
 ## トラブルシューティング
 
@@ -73,6 +96,17 @@ ls /Applications | grep Photoshop
 3. ターミナルから以下を実行：
 
 ```bash
-chmod +x run-ai.sh  # 実行権限を付与
-./run-ai.sh         # 再実行
+chmod +x run-ai.sh run-bg-color.sh  # 実行権限を付与
+./run-ai.sh                         # AI背景マスク作成
+./run-bg-color.sh                   # 背景色追加
 ```
+
+### 背景色追加でファイルが保存されない場合
+
+1. デバッグログを確認：
+```bash
+cat bg-color-debug.log
+```
+
+2. bg_color_inputフォルダにPSDファイルがあることを確認
+3. Photoshopが完全に終了していることを確認して再実行
