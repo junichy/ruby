@@ -1,12 +1,13 @@
-// Photoshop AI背景削除 - 修正版
-// 被写体選択 + 削除方式
+// Photoshop AI背景マスク作成 - PSD形式
+// 被写体選択 + レイヤーマスク作成方式
 
 // ========== 設定 ==========
 var AI_CONFIG = {
     inputFolderName: "images",
     outputFolderName: "output",
-    outputFormat: "PNG",
-    pngCompression: 6,
+    outputFormat: "PSD", // PNG から PSD に変更
+    saveAsMultiLayer: true, // マルチレイヤー形式で保存
+    useMask: true, // マスクを使用
     showProgress: true
 };
 
@@ -17,13 +18,24 @@ var outputFolder = new Folder(scriptFolder + "/" + AI_CONFIG.outputFolderName);
 
 // ========== ログ ==========
 function log(message) {
-    $.writeln("[" + new Date().toLocaleTimeString() + "] " + message);
+    var logMessage = "[" + new Date().toLocaleTimeString() + "] " + message;
+    $.writeln(logMessage);
+    
+    // ログファイルにも出力
+    try {
+        var logFile = new File(scriptFolder + "/debug.log");
+        logFile.open("a");
+        logFile.writeln(logMessage);
+        logFile.close();
+    } catch (e) {
+        // ログファイル書き込みエラーは無視
+    }
 }
 
-// ========== AI背景削除（修正版） ==========
-function removeBackgroundAI(doc) {
+// ========== AI背景マスク作成（修正版） ==========
+function createBackgroundMask(doc) {
     try {
-        log("AI背景削除開始: " + doc.name);
+        log("AI背景マスク作成開始: " + doc.name);
         
         // ドキュメント準備
         if (doc.mode != DocumentMode.RGB) {
@@ -34,7 +46,7 @@ function removeBackgroundAI(doc) {
         }
         if (doc.activeLayer.isBackgroundLayer) {
             doc.activeLayer.isBackgroundLayer = false;
-            doc.activeLayer.name = "Layer 0";
+            doc.activeLayer.name = "Original Layer";
         }
         
         // 方法1: 被写体を選択（AI）
@@ -46,20 +58,44 @@ function removeBackgroundAI(doc) {
             return false;
         }
         
-        // 選択範囲を反転（背景を選択）
-        doc.selection.invert();
-        
-        // 背景を削除
-        doc.selection.clear();
+        // レイヤーマスクを追加
+        try {
+            // ActionDescriptorを使用してレイヤーマスクを追加
+            var idMk = charIDToTypeID("Mk  ");
+            var desc = new ActionDescriptor();
+            var idNw = charIDToTypeID("Nw  ");
+            var idChnl = charIDToTypeID("Chnl");
+            desc.putClass(idNw, idChnl);
+            var idAt = charIDToTypeID("At  ");
+            var ref = new ActionReference();
+            var idChnl = charIDToTypeID("Chnl");
+            var idMsk = charIDToTypeID("Msk ");
+            ref.putEnumerated(idChnl, idChnl, idMsk);
+            var idLyr = charIDToTypeID("Lyr ");
+            var idOrdn = charIDToTypeID("Ordn");
+            var idTrgt = charIDToTypeID("Trgt");
+            ref.putEnumerated(idLyr, idOrdn, idTrgt);
+            desc.putReference(idAt, ref);
+            var idUsng = charIDToTypeID("Usng");
+            var idUsrMskType = stringIDToTypeID("userMaskType");
+            var idRvlS = charIDToTypeID("RvlS");
+            desc.putEnumerated(idUsng, idUsrMskType, idRvlS);
+            executeAction(idMk, desc, DialogModes.NO);
+            
+            log("レイヤーマスク追加成功");
+        } catch (e) {
+            log("レイヤーマスク追加エラー: " + e.toString());
+            return false;
+        }
         
         // 選択解除
         doc.selection.deselect();
         
-        log("AI背景削除完了: " + doc.name);
+        log("AI背景マスク作成完了: " + doc.name);
         return true;
         
     } catch (e) {
-        log("背景削除エラー: " + e.toString());
+        log("背景マスク作成エラー: " + e.toString());
         return false;
     }
 }
@@ -104,23 +140,39 @@ function executeQuickAction() {
     executeAction(idQckA, desc, DialogModes.NO);
 }
 
-// ========== PNG保存 ==========
-function savePNG(doc, path) {
-    var file = new File(path);
-    var options = new PNGSaveOptions();
-    options.compression = AI_CONFIG.pngCompression;
-    options.interlaced = false;
-    
-    doc.saveAs(file, options, true);
-    log("保存: " + file.name);
+// ========== PSD保存 ==========
+function savePSD(doc, path) {
+    try {
+        log("PSD保存開始: " + path);
+        
+        var file = new File(path);
+        var options = new PhotoshopSaveOptions();
+        options.layers = AI_CONFIG.saveAsMultiLayer; // レイヤーを保持
+        options.embedColorProfile = true;
+        options.alphaChannels = true; // アルファチャンネルを保持
+        options.annotations = true;
+        options.spotColors = true;
+        
+        // ファイル保存
+        doc.saveAs(file, options, true, Extension.LOWERCASE);
+        log("PSD保存成功: " + file.name);
+        return true;
+        
+    } catch (e) {
+        log("PSD保存エラー: " + e.toString());
+        log("保存先パス: " + path);
+        return false;
+    }
 }
 
 // ========== メイン処理 ==========
 function main() {
-    app.displayDialogs = DialogModes.NO;
-    app.preferences.rulerUnits = Units.PIXELS;
-    
-    log("========== Photoshop AI背景削除（修正版）開始 ==========");
+    try {
+        app.displayDialogs = DialogModes.NO;
+        app.preferences.rulerUnits = Units.PIXELS;
+        
+        log("========== Photoshop AI背景マスク作成（PSD形式）開始 ==========");
+        log("Photoshopバージョン: " + app.version);
     
     // フォルダ確認
     if (!inputFolder.exists) {
@@ -149,7 +201,7 @@ function main() {
     // 各ファイル処理
     for (var i = 0; i < files.length; i++) {
         var file = files[i];
-        var outputName = file.name.replace(/\.[^.]+$/, "_removed.png");
+        var outputName = file.name.replace(/\.[^.]+$/, "_masked.psd");
         var outputPath = outputFolder + "/" + outputName;
         
         log("(" + (i+1) + "/" + files.length + ") " + file.name);
@@ -157,9 +209,12 @@ function main() {
         try {
             var doc = app.open(file);
             
-            if (removeBackgroundAI(doc)) {
-                savePNG(doc, outputPath);
-                success++;
+            if (createBackgroundMask(doc)) {
+                if (savePSD(doc, outputPath)) {
+                    success++;
+                } else {
+                    error++;
+                }
             } else {
                 error++;
             }
@@ -179,13 +234,18 @@ function main() {
     log("成功: " + success + ", エラー: " + error);
     log("処理時間: " + totalSeconds + "秒");
     
-    var result = "AI背景削除完了\n\n";
+    var result = "AI背景マスク作成完了\n\n";
     result += "成功: " + success + " ファイル\n";
     result += "エラー: " + error + " ファイル\n";
     result += "処理時間: " + totalSeconds + " 秒\n\n";
     result += "出力: " + outputFolder.fsName;
     
     alert(result);
+    
+    } catch (e) {
+        log("メイン処理でエラー: " + e.toString());
+        alert("エラーが発生しました: " + e.toString());
+    }
 }
 
 // ========== 実行 ==========
