@@ -26,11 +26,8 @@ var ALL_IN_ONE_CONFIG = {
     
     // プリセットサイズ
     presetSizes: [
-        { name: "デフォルト (2210×3315)", width: 2210, height: 3315 },
-        { name: "A4サイズ (2480×3508)", width: 2480, height: 3508 },
-        { name: "正方形 (3000×3000)", width: 3000, height: 3000 },
-        { name: "横長 (3315×2210)", width: 3315, height: 2210 },
-        { name: "カスタム", width: 0, height: 0 }
+        { name: "Michael Kors (2210×3315)", width: 2210, height: 3315 },
+        { name: "カスタム（手動入力）", width: 0, height: 0 }
     ],
     
     showProgress: true
@@ -91,18 +88,28 @@ function showAllInOneDialog() {
     presetDropdown.selection = 0;
     
     // カスタムサイズ入力
-    var customSizeGroup = sizePanel.add("group");
-    customSizeGroup.enabled = false;
+    var customSizePanel = sizePanel.add("panel", undefined, "カスタムサイズ（手動入力）");
+    customSizePanel.enabled = false;
+    customSizePanel.orientation = "column";
     
-    customSizeGroup.add("statictext", undefined, "幅:");
-    var widthInput = customSizeGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasWidth));
+    var customSizeRow1 = customSizePanel.add("group");
+    customSizeRow1.add("statictext", undefined, "幅:");
+    var widthInput = customSizeRow1.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasWidth));
     widthInput.characters = 8;
+    customSizeRow1.add("statictext", undefined, "px");
     
-    customSizeGroup.add("statictext", undefined, "高さ:");
-    var heightInput = customSizeGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasHeight));
+    var customSizeRow2 = customSizePanel.add("group");
+    customSizeRow2.add("statictext", undefined, "高さ:");
+    var heightInput = customSizeRow2.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasHeight));
     heightInput.characters = 8;
+    customSizeRow2.add("statictext", undefined, "px");
     
-    customSizeGroup.add("statictext", undefined, "px");
+    var customSizeNote = customSizePanel.add("statictext", undefined, "※「カスタム（手動入力）」選択時のみ有効");
+    try {
+        customSizeNote.graphics.font = ScriptUI.newFont("dialog", ScriptUI.FontStyle.REGULAR, 10);
+    } catch (e) {
+        // フォント設定エラーは無視
+    }
     
     // ========== 画像配置セクション ==========
     var positionPanel = dialog.add("panel", undefined, "画像配置設定");
@@ -180,12 +187,16 @@ function showAllInOneDialog() {
     // ========== イベントハンドラ ==========
     presetDropdown.onChange = function() {
         var isCustom = presetDropdown.selection.index === ALL_IN_ONE_CONFIG.presetSizes.length - 1;
-        customSizeGroup.enabled = isCustom;
+        customSizePanel.enabled = isCustom;
         
         if (!isCustom) {
             var preset = ALL_IN_ONE_CONFIG.presetSizes[presetDropdown.selection.index];
             widthInput.text = String(preset.width);
             heightInput.text = String(preset.height);
+        } else {
+            // カスタム選択時はデフォルト値をクリア
+            widthInput.text = "";
+            heightInput.text = "";
         }
     };
     
@@ -203,6 +214,39 @@ function showAllInOneDialog() {
     };
     
     okButton.onClick = function() {
+        // カスタムサイズ検証
+        var isCustom = presetDropdown.selection.index === ALL_IN_ONE_CONFIG.presetSizes.length - 1;
+        if (isCustom && resizeCheckbox.value) {
+            var width = parseInt(widthInput.text);
+            var height = parseInt(heightInput.text);
+            
+            if (isNaN(width) || width <= 0 || width > 20000) {
+                alert("幅は1から20000の数値を入力してください。");
+                return;
+            }
+            
+            if (isNaN(height) || height <= 0 || height > 20000) {
+                alert("高さは1から20000の数値を入力してください。");
+                return;
+            }
+        }
+        
+        // マージン検証
+        if (resizeCheckbox.value) {
+            var bottomMargin = parseInt(bottomMarginInput.text);
+            var sideMargin = parseInt(sideMarginInput.text);
+            
+            if (isNaN(bottomMargin) || bottomMargin < 0) {
+                alert("下部マージンは0以上の数値を入力してください。");
+                return;
+            }
+            
+            if (isNaN(sideMargin) || sideMargin < 0) {
+                alert("左右マージンは0以上の数値を入力してください。");
+                return;
+            }
+        }
+        
         dialog.close(1);
     };
     
@@ -519,8 +563,10 @@ function createShadow(doc, settings) {
         
         log("影レイヤー作成完了");
         
-        // マスクにぼかしを適用（下部境界）
+        // 下部境界のみをぼかすための部分的なぼかし処理
         try {
+            log("下部境界ぼかし開始");
+            
             // マスクチャンネルを選択
             var desc = new ActionDescriptor();
             var ref = new ActionReference();
@@ -528,13 +574,40 @@ function createShadow(doc, settings) {
             desc.putReference(charIDToTypeID("null"), ref);
             executeAction(charIDToTypeID("slct"), desc, DialogModes.NO);
             
-            // ガウシアンブラーを適用（下部境界に重点）
-            var blurRadius = settings.shadowBlur; // 直接ピクセル値を使用
+            // マスクの境界を取得
+            var maskBounds = doc.activeLayer.bounds;
+            var canvasHeight = doc.height;
+            var canvasWidth = doc.width;
+            
+            // 下部30%の領域のみを選択範囲として作成
+            var blurHeight = settings.shadowBlur * 2; // ぼかし領域の高さ
+            var selectionTop = maskBounds[3] - blurHeight; // 下端からぼかし高さ分上
+            var selectionBottom = canvasHeight;
+            var selectionLeft = 0;
+            var selectionRight = canvasWidth;
+            
+            // 矩形選択範囲を作成（下部領域）
+            var selectionArray = [
+                [selectionLeft, selectionTop],
+                [selectionRight, selectionTop], 
+                [selectionRight, selectionBottom],
+                [selectionLeft, selectionBottom]
+            ];
+            doc.selection.select(selectionArray, SelectionType.REPLACE, 0, false);
+            
+            // 選択範囲にフェザーを適用（境界をなじませる）
+            doc.selection.feather(settings.shadowBlur / 4);
+            
+            // 選択範囲内でガウシアンブラーを適用
+            var blurRadius = settings.shadowBlur;
             var idGsnB = charIDToTypeID("GsnB");
             var desc2 = new ActionDescriptor();
             var idRds = charIDToTypeID("Rds ");
             desc2.putUnitDouble(idRds, charIDToTypeID("#Pxl"), blurRadius);
             executeAction(idGsnB, desc2, DialogModes.NO);
+            
+            // 選択範囲を解除
+            doc.selection.deselect();
             
             // RGBチャンネルに戻す
             var desc3 = new ActionDescriptor();
@@ -543,10 +616,23 @@ function createShadow(doc, settings) {
             desc3.putReference(charIDToTypeID("null"), ref2);
             executeAction(charIDToTypeID("slct"), desc3, DialogModes.NO);
             
-            log("マスクぼかし適用完了: " + blurRadius + "px");
+            log("下部境界ぼかし適用完了: " + blurRadius + "px（下部領域のみ）");
             
         } catch (e) {
-            log("マスクぼかしエラー: " + e.toString());
+            log("下部境界ぼかしエラー: " + e.toString());
+            log("フォールバック: 全体ぼかしを適用");
+            
+            // エラー時は従来の全体ぼかしにフォールバック
+            try {
+                var blurRadius = settings.shadowBlur;
+                var idGsnB = charIDToTypeID("GsnB");
+                var desc2 = new ActionDescriptor();
+                var idRds = charIDToTypeID("Rds ");
+                desc2.putUnitDouble(idRds, charIDToTypeID("#Pxl"), blurRadius);
+                executeAction(idGsnB, desc2, DialogModes.NO);
+            } catch (fallbackError) {
+                log("フォールバックぼかしもエラー: " + fallbackError.toString());
+            }
         }
         
         // レベル補正を適用（ハイライトを下げる） - オプション
@@ -704,23 +790,8 @@ function main() {
         for (var i = 0; i < files.length; i++) {
             var file = files[i];
             
-            // 出力ファイル名生成
-            var outputName = file.name.replace(/\.[^.]+$/, "");
-            if (settings.processMask) outputName += "_masked";
-            if (settings.processResize) outputName += "_" + settings.width + "x" + settings.height;
-            if (settings.processShadow) outputName += "_shadow";
-            if (settings.processBgColor) {
-                var colorSuffix = "";
-                if (settings.backgroundColor.name === "白") {
-                    colorSuffix = "white";
-                } else if (settings.backgroundColor.name === "ライトグレー") {
-                    colorSuffix = "lightgray";
-                } else {
-                    colorSuffix = "custom";
-                }
-                outputName += "_" + colorSuffix;
-            }
-            outputName += ".psd";
+            // 出力ファイル名生成（入力ファイル名と同じ、拡張子のみ.psdに変更）
+            var outputName = file.name.replace(/\.[^.]+$/, "") + ".psd";
             
             var outputPath = outputFolder + "/" + outputName;
             
