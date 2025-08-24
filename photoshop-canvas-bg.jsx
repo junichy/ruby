@@ -45,7 +45,7 @@ function log(message) {
 
 // ========== 統合設定ダイアログ ==========
 function showSettingsDialog() {
-    var dialog = new Window("dialog", "キャンバスサイズと背景色の設定");
+    var dialog = new Window("dialog", "キャンバスサイズ・配置・背景色の設定");
     dialog.orientation = "column";
     dialog.alignChildren = "fill";
     
@@ -80,6 +80,30 @@ function showSettingsDialog() {
     // 解像度表示
     var resolutionGroup = sizePanel.add("group");
     resolutionGroup.add("statictext", undefined, "解像度: 72 dpi (固定)");
+    
+    // ========== 画像配置セクション ==========
+    var positionPanel = dialog.add("panel", undefined, "画像配置設定");
+    positionPanel.orientation = "column";
+    positionPanel.alignChildren = "left";
+    
+    // 下部マージン
+    var bottomMarginGroup = positionPanel.add("group");
+    bottomMarginGroup.add("statictext", undefined, "下部マージン:");
+    var bottomMarginInput = bottomMarginGroup.add("edittext", undefined, "253");
+    bottomMarginInput.characters = 6;
+    bottomMarginGroup.add("statictext", undefined, "px (画像下端からキャンバス下端)");
+    
+    // 左右マージン
+    var sideMarginGroup = positionPanel.add("group");
+    sideMarginGroup.add("statictext", undefined, "左右マージン:");
+    var sideMarginInput = sideMarginGroup.add("edittext", undefined, "150");
+    sideMarginInput.characters = 6;
+    sideMarginGroup.add("statictext", undefined, "px (最小マージン)");
+    
+    // 配置オプション
+    var positionOptionsGroup = positionPanel.add("group");
+    var autoFitCheckbox = positionOptionsGroup.add("checkbox", undefined, "縦横比を保持して自動調整");
+    autoFitCheckbox.value = true;
     
     // ========== 背景色セクション ==========
     var colorPanel = dialog.add("panel", undefined, "背景色設定");
@@ -133,6 +157,9 @@ function showSettingsDialog() {
         var settings = {
             width: parseInt(widthInput.text),
             height: parseInt(heightInput.text),
+            bottomMargin: parseInt(bottomMarginInput.text),
+            sideMargin: parseInt(sideMarginInput.text),
+            autoFit: autoFitCheckbox.value,
             backgroundColor: null
         };
         
@@ -172,30 +199,152 @@ function hexToRgb(hex) {
     return [128, 128, 128]; // デフォルト値
 }
 
-// ========== キャンバスサイズ変更と中央配置 ==========
-function resizeCanvasAndCenter(doc, width, height) {
+// ========== マスクの境界を取得 ==========
+function getMaskBounds(doc) {
     try {
-        log("キャンバスサイズ変更開始: " + width + "×" + height + "px");
+        var activeLayer = doc.activeLayer;
         
-        // 現在の画像サイズを記録
-        var originalWidth = doc.width.value;
-        var originalHeight = doc.height.value;
+        // まずレイヤーマスクの存在を確認
+        var hasLayerMask = false;
+        try {
+            // レイヤーマスクを選択してみる
+            var desc = new ActionDescriptor();
+            var ref = new ActionReference();
+            ref.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
+            desc.putReference(charIDToTypeID("null"), ref);
+            desc.putBoolean(charIDToTypeID("MkVs"), false);
+            executeAction(charIDToTypeID("slct"), desc, DialogModes.NO);
+            hasLayerMask = true;
+        } catch (e) {
+            // マスクがない場合
+            hasLayerMask = false;
+        }
+        
+        if (hasLayerMask) {
+            // マスクから選択範囲を作成
+            var desc = new ActionDescriptor();
+            var ref = new ActionReference();
+            ref.putProperty(charIDToTypeID("Chnl"), charIDToTypeID("fsel"));
+            desc.putReference(charIDToTypeID("null"), ref);
+            var ref2 = new ActionReference();
+            ref2.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
+            desc.putReference(charIDToTypeID("T   "), ref2);
+            executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+            
+            // 選択範囲の境界を取得
+            var bounds = doc.selection.bounds;
+            
+            // 選択解除
+            doc.selection.deselect();
+            
+            // RGBチャンネルに戻す
+            var desc2 = new ActionDescriptor();
+            var ref3 = new ActionReference();
+            ref3.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("RGB "));
+            desc2.putReference(charIDToTypeID("null"), ref3);
+            executeAction(charIDToTypeID("slct"), desc2, DialogModes.NO);
+            
+            log("マスク境界取得成功");
+            return {
+                left: bounds[0].value,
+                top: bounds[1].value,
+                right: bounds[2].value,
+                bottom: bounds[3].value,
+                width: bounds[2].value - bounds[0].value,
+                height: bounds[3].value - bounds[1].value
+            };
+        } else {
+            // マスクがない場合はレイヤーの境界を使用
+            log("マスクなし - レイヤー境界を使用");
+            var bounds = activeLayer.bounds;
+            return {
+                left: bounds[0].value,
+                top: bounds[1].value,
+                right: bounds[2].value,
+                bottom: bounds[3].value,
+                width: bounds[2].value - bounds[0].value,
+                height: bounds[3].value - bounds[1].value
+            };
+        }
+        
+    } catch (e) {
+        log("境界取得エラー - レイヤー境界を使用: " + e.toString());
+        // エラー時はレイヤーの境界を返す
+        var bounds = doc.activeLayer.bounds;
+        return {
+            left: bounds[0].value,
+            top: bounds[1].value,
+            right: bounds[2].value,
+            bottom: bounds[3].value,
+            width: bounds[2].value - bounds[0].value,
+            height: bounds[3].value - bounds[1].value
+        };
+    }
+}
+
+// ========== キャンバスサイズ変更と画像配置 ==========
+function resizeCanvasAndPosition(doc, settings) {
+    try {
+        log("キャンバスサイズ変更と配置開始: " + settings.width + "×" + settings.height + "px");
+        log("配置設定 - 下部マージン: " + settings.bottomMargin + "px, 左右マージン: " + settings.sideMargin + "px");
         
         // 解像度を72dpiに設定
         doc.resizeImage(undefined, undefined, 72, ResampleMethod.NONE);
         
-        // キャンバスサイズを変更（中央配置）
+        // 現在のマスクまたはレイヤーの境界を取得
+        var maskBounds = getMaskBounds(doc);
+        log("マスク境界: " + maskBounds.width + "×" + maskBounds.height + "px");
+        
+        // 必要なスケールを計算
+        var scale = 1.0;
+        if (settings.autoFit) {
+            // 横方向のスケール（左右マージンを考慮）
+            var maxWidth = settings.width - (settings.sideMargin * 2);
+            var scaleX = maxWidth / maskBounds.width;
+            
+            // 縦方向のスケール（下部マージンを考慮）
+            var maxHeight = settings.height - settings.bottomMargin;
+            var scaleY = maxHeight / maskBounds.height;
+            
+            // 小さい方のスケールを使用（縦横比を保持）
+            scale = Math.min(scaleX, scaleY);
+            
+            log("計算されたスケール: " + scale);
+        }
+        
+        // 画像をリサイズ（必要な場合）
+        if (scale != 1.0) {
+            var newWidth = doc.width.value * scale;
+            var newHeight = doc.height.value * scale;
+            doc.resizeImage(UnitValue(newWidth, "px"), UnitValue(newHeight, "px"), 72, ResampleMethod.BICUBIC);
+            
+            // リサイズ後の境界を再取得
+            maskBounds = getMaskBounds(doc);
+        }
+        
+        // キャンバスサイズを変更
         doc.resizeCanvas(
-            UnitValue(width, "px"),
-            UnitValue(height, "px"),
-            AnchorPosition.MIDDLECENTER
+            UnitValue(settings.width, "px"),
+            UnitValue(settings.height, "px"),
+            AnchorPosition.TOPLEFT
         );
         
-        log("キャンバスサイズ変更完了");
+        // 画像を配置（下部マージンと左右中央）
+        var targetX = (settings.width - maskBounds.width) / 2;
+        var targetY = settings.height - settings.bottomMargin - maskBounds.height;
+        
+        // 現在の位置から移動量を計算
+        var deltaX = targetX - maskBounds.left;
+        var deltaY = targetY - maskBounds.top;
+        
+        // レイヤーを移動
+        doc.activeLayer.translate(deltaX, deltaY);
+        
+        log("画像配置完了 - X: " + targetX + ", Y: " + targetY);
         return true;
         
     } catch (e) {
-        log("キャンバスサイズ変更エラー: " + e.toString());
+        log("キャンバスサイズ変更と配置エラー: " + e.toString());
         return false;
     }
 }
@@ -302,6 +451,7 @@ function main() {
         
         log("選択された設定:");
         log("  キャンバスサイズ: " + settings.width + "×" + settings.height + "px");
+        log("  画像配置 - 下部マージン: " + settings.bottomMargin + "px, 左右マージン: " + settings.sideMargin + "px");
         log("  背景色: " + settings.backgroundColor.name + " " + settings.backgroundColor.hex);
         log("処理対象: " + files.length + "ファイル");
         
@@ -332,8 +482,8 @@ function main() {
             try {
                 var doc = app.open(file);
                 
-                // キャンバスサイズ変更と中央配置
-                if (resizeCanvasAndCenter(doc, settings.width, settings.height)) {
+                // キャンバスサイズ変更と画像配置
+                if (resizeCanvasAndPosition(doc, settings)) {
                     // 背景レイヤー追加
                     if (addBackgroundLayer(doc, settings.backgroundColor)) {
                         // PSD保存
