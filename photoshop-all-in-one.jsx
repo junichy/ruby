@@ -64,6 +64,12 @@ var ALL_IN_ONE_CONFIG = {
                     leftMargin: 513,
                     rightMargin: 415
                     // 高さセンター合わせのため、topMargin/bottomMarginは指定しない（自動中央配置）
+                },
+                {
+                    name: "開き",
+                    positioning: "center-symmetric", // パターン4: 高さセンター＋左右対称マージン
+                    sideMargin: 418
+                    // 高さセンター合わせのため、topMargin/bottomMarginは指定しない（自動中央配置）
                 }
             ]
         }
@@ -421,6 +427,13 @@ function showAllInOneDialog() {
                     bottomMarginGroup.enabled = false; // 下部マージンは設定値で固定
                     leftMarginInput.text = cut.leftMargin !== undefined ? String(cut.leftMargin) : "513";
                     rightMarginInput.text = cut.rightMargin !== undefined ? String(cut.rightMargin) : "415";
+                } else if (cut.positioning === "center-symmetric") {
+                    // 対称マージンパターン: 左右対称、高さセンター
+                    asymmetricMarginGroup.enabled = false;
+                    sideMarginGroup.enabled = true;
+                    topMarginGroup.enabled = false; // 高さセンターのため上下マージンは無効
+                    bottomMarginGroup.enabled = false;
+                    sideMarginInput.text = cut.sideMargin !== undefined ? String(cut.sideMargin) : "418";
                 } else if (cut.positioning === "bottom-top") {
                     // 上下マージンパターン: 上下調整可能、左右は対称
                     asymmetricMarginGroup.enabled = false;
@@ -882,6 +895,12 @@ function resizeCanvasAndPosition(doc, settings) {
                 maxHeight = settings.height; // 高さセンター合わせのため、全体の高さを使用
                 log("center-asymmetricパターン: 最大幅 = " + maxWidth + "px (全体" + settings.width + " - 左" + settings.leftMargin + " - 右" + settings.rightMargin + ")");
                 log("center-asymmetricパターン: 最大高さ = " + maxHeight + "px (全体の高さを使用)");
+            } else if (settings.positioning === "center-symmetric") {
+                // 対称マージンパターン: 左右対称マージン、高さは全体を使用
+                maxWidth = settings.width - (settings.sideMargin * 2);
+                maxHeight = settings.height; // 高さセンター合わせのため、全体の高さを使用
+                log("center-symmetricパターン: 最大幅 = " + maxWidth + "px (全体" + settings.width + " - 左右" + (settings.sideMargin * 2) + ")");
+                log("center-symmetricパターン: 最大高さ = " + maxHeight + "px (全体の高さを使用)");
             } else if (settings.positioning === "bottom-top") {
                 // bottom-topパターン: 上部と下部の両マージンを考慮、左右は対称
                 maxWidth = settings.width - (settings.sideMargin * 2);
@@ -951,6 +970,31 @@ function resizeCanvasAndPosition(doc, settings) {
             log("  非対称中央配置X: " + centerOffsetX + "px = (利用可能幅" + availableWidth + " - マスク幅" + maskBounds.width + ") ÷ 2");
             log("  目標Y: " + targetY + " (完全中央)");
             log("  目標X: " + targetX + " (左" + settings.leftMargin + " + 中央オフセット" + centerOffsetX + ")");
+            
+            // 検証: 上下の距離が等しいか確認
+            var distanceFromTop = targetY;
+            var distanceFromBottom = settings.height - targetY - maskBounds.height;
+            log("  検証: 上部からマスクまでの距離 = " + distanceFromTop + "px");
+            log("  検証: マスクから下部までの距離 = " + distanceFromBottom + "px");
+            log("  検証: 完全センター判定 = " + (Math.abs(distanceFromTop - distanceFromBottom) < 1 ? "OK" : "NG"));
+        } else if (settings.positioning === "center-symmetric") {
+            // パターン4: 完全な高さセンター合わせ + 対称左右マージン（開き用）
+            // Y軸: キャンバス全体の中央に配置
+            targetY = (settings.height - maskBounds.height) / 2;
+            
+            // X軸: 対称マージンを考慮した配置（中央配置）
+            targetX = (settings.width - maskBounds.width) / 2;
+            
+            log("配置パターン: 完全高さセンター＋対称マージン");
+            log("  キャンバス高さ: " + settings.height + "px, マスク高さ: " + maskBounds.height + "px");
+            log("  対称マージン: " + settings.sideMargin + "px (左右同じ)");
+            
+            var centerOffsetY = (settings.height - maskBounds.height) / 2;
+            var centerOffsetX = (settings.width - maskBounds.width) / 2;
+            log("  完全中央配置Y: " + centerOffsetY + "px = (キャンバス" + settings.height + " - マスク高さ" + maskBounds.height + ") ÷ 2");
+            log("  完全中央配置X: " + centerOffsetX + "px = (キャンバス" + settings.width + " - マスク幅" + maskBounds.width + ") ÷ 2");
+            log("  目標Y: " + targetY + " (完全中央)");
+            log("  目標X: " + targetX + " (完全中央)");
             
             // 検証: 上下の距離が等しいか確認
             var distanceFromTop = targetY;
@@ -1228,8 +1272,8 @@ function main() {
             outputFolder.create();
         }
         
-        // 画像ファイル取得
-        var files = inputFolder.getFiles(/\.(jpg|jpeg|png|tif|tiff|bmp)$/i);
+        // 画像ファイル取得（PSDも含む）
+        var files = inputFolder.getFiles(/\.(jpg|jpeg|png|tif|tiff|bmp|psd)$/i);
         
         if (files.length == 0) {
             alert("処理する画像がありません。\nimagesフォルダに画像を配置してください。");
