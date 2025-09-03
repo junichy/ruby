@@ -57,6 +57,13 @@ var ALL_IN_ONE_CONFIG = {
                     positioning: "bottom-top",    // パターン2: 下部＋上部マージン
                     topMargin: 1933,
                     bottomMargin: 230
+                },
+                {
+                    name: "俯瞰",
+                    positioning: "center-asymmetric", // パターン3: 高さセンター＋左右非対称マージン
+                    leftMargin: 513,
+                    rightMargin: 415
+                    // 高さセンター合わせのため、topMargin/bottomMarginは指定しない（自動中央配置）
                 }
             ]
         }
@@ -65,7 +72,7 @@ var ALL_IN_ONE_CONFIG = {
         //     name: "長財布",
         //     cuts: [
         //         { name: "正面", positioning: "bottom-top", topMargin: 1500, bottomMargin: 200 },
-        //         { name: "開いた状態", positioning: "bottom-top", topMargin: 1200, bottomMargin: 300 }
+        //         { name: "俯瞰", positioning: "center-asymmetric", leftMargin: 263, rightMargin: 213, topMargin: 1200, bottomMargin: 300 }
         //     ]
         // },
         // {
@@ -257,12 +264,23 @@ function showAllInOneDialog() {
         bottomMarginInput.characters = 6;
         bottomMarginGroup.add("statictext", undefined, "px");
         
-        // 左右マージン
+        // 左右マージン（対称）
         var sideMarginGroup = positionPanel.add("group");
         sideMarginGroup.add("statictext", undefined, "左右マージン:");
         var sideMarginInput = sideMarginGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultSideMargin));
         sideMarginInput.characters = 6;
         sideMarginGroup.add("statictext", undefined, "px");
+        
+        // 左右マージン（非対称）- 俯瞰などで使用
+        var asymmetricMarginGroup = positionPanel.add("group");
+        asymmetricMarginGroup.add("statictext", undefined, "左マージン:");
+        var leftMarginInput = asymmetricMarginGroup.add("edittext", undefined, "513");
+        leftMarginInput.characters = 6;
+        asymmetricMarginGroup.add("statictext", undefined, "px　右マージン:");
+        var rightMarginInput = asymmetricMarginGroup.add("edittext", undefined, "415");
+        rightMarginInput.characters = 6;
+        asymmetricMarginGroup.add("statictext", undefined, "px");
+        asymmetricMarginGroup.enabled = false; // デフォルトで無効
         
         // 配置オプション
         var autoFitCheckbox = positionPanel.add("checkbox", undefined, "縦横比を保持して自動調整");
@@ -389,10 +407,33 @@ function showAllInOneDialog() {
                 
                 var cut = category.cuts[cutIndex];
                 
-                // 配置設定を一括適用
+                // 基本配置設定を一括適用
                 topMarginInput.text = cut.topMargin !== undefined ? String(cut.topMargin) : "0";
                 bottomMarginInput.text = cut.bottomMargin !== undefined ? String(cut.bottomMargin) : String(ALL_IN_ONE_CONFIG.defaultBottomMargin);
                 sideMarginInput.text = cut.sideMargin !== undefined ? String(cut.sideMargin) : String(ALL_IN_ONE_CONFIG.defaultSideMargin);
+                
+                // 配置パターンに応じたUI制御
+                if (cut.positioning === "center-asymmetric") {
+                    // 非対称マージンパターン: 左右非対称、上下は固定値
+                    asymmetricMarginGroup.enabled = true;
+                    sideMarginGroup.enabled = false;
+                    topMarginGroup.enabled = false;  // 上部マージンは設定値で固定
+                    bottomMarginGroup.enabled = false; // 下部マージンは設定値で固定
+                    leftMarginInput.text = cut.leftMargin !== undefined ? String(cut.leftMargin) : "513";
+                    rightMarginInput.text = cut.rightMargin !== undefined ? String(cut.rightMargin) : "415";
+                } else if (cut.positioning === "bottom-top") {
+                    // 上下マージンパターン: 上下調整可能、左右は対称
+                    asymmetricMarginGroup.enabled = false;
+                    sideMarginGroup.enabled = true;
+                    topMarginGroup.enabled = true;
+                    bottomMarginGroup.enabled = true;
+                } else {
+                    // 通常の下部+左右マージンパターン
+                    asymmetricMarginGroup.enabled = false;
+                    sideMarginGroup.enabled = true;
+                    topMarginGroup.enabled = false; // 上部マージンは使用しない
+                    bottomMarginGroup.enabled = true;
+                }
             } catch (e) {
                 log("配置設定更新エラー: " + e.toString());
             }
@@ -474,9 +515,26 @@ function showAllInOneDialog() {
                     return;
                 }
                 
-                if (isNaN(sideMargin) || sideMargin < 0) {
-                    alert("左右マージンは0以上の数値を入力してください。");
-                    return;
+                // 非対称マージンの場合の検証
+                if (asymmetricMarginGroup.enabled) {
+                    var leftMargin = parseInt(leftMarginInput.text);
+                    var rightMargin = parseInt(rightMarginInput.text);
+                    
+                    if (isNaN(leftMargin) || leftMargin < 0) {
+                        alert("左マージンは0以上の数値を入力してください。");
+                        return;
+                    }
+                    
+                    if (isNaN(rightMargin) || rightMargin < 0) {
+                        alert("右マージンは0以上の数値を入力してください。");
+                        return;
+                    }
+                } else {
+                    // 通常の左右マージンの検証
+                    if (isNaN(sideMargin) || sideMargin < 0) {
+                        alert("左右マージンは0以上の数値を入力してください。");
+                        return;
+                    }
                 }
             }
             
@@ -531,16 +589,19 @@ function showAllInOneDialog() {
         log("ダイアログ結果: " + result + " 表示完了時間: " + (new Date().getTime() - startTime) + "ms");
         
         if (result === 1) {
-            // 選択されたカットの配置情報を取得
+            // 選択されたカットの配置情報を取得（デバッグ情報付き）
             var selectedCut = null;
             var isCustom = brandDropdown.selection.index === ALL_IN_ONE_CONFIG.brands.length;
             if (!isCustom) {
                 var categoryIndex = categoryDropdown.selection ? categoryDropdown.selection.index : 0;
                 var cutIndex = cutDropdown.selection ? cutDropdown.selection.index : 0;
+                log("選択状態 - カテゴリ: " + categoryIndex + ", カット: " + cutIndex);
                 if (categoryIndex >= 0 && cutIndex >= 0 && categoryIndex < ALL_IN_ONE_CONFIG.categories.length) {
                     var category = ALL_IN_ONE_CONFIG.categories[categoryIndex];
+                    log("選択カテゴリ: " + category.name + " (カット数: " + category.cuts.length + ")");
                     if (cutIndex < category.cuts.length) {
                         selectedCut = category.cuts[cutIndex];
+                        log("選択カット: " + selectedCut.name + " (positioning: " + selectedCut.positioning + ")");
                     }
                 }
             }
@@ -554,7 +615,9 @@ function showAllInOneDialog() {
                 height: parseInt(heightInput.text),
                 topMargin: parseInt(topMarginInput.text),
                 bottomMargin: parseInt(bottomMarginInput.text),
-                sideMargin: parseInt(sideMarginInput.text),
+                sideMargin: asymmetricMarginGroup.enabled ? undefined : parseInt(sideMarginInput.text),
+                leftMargin: asymmetricMarginGroup.enabled ? parseInt(leftMarginInput.text) : undefined,
+                rightMargin: asymmetricMarginGroup.enabled ? parseInt(rightMarginInput.text) : undefined,
                 autoFit: autoFitCheckbox.value,
                 shadowBlur: parseInt(shadowBlurInput.text),
                 shadowHighlight: parseInt(shadowLevelsInput.text),
@@ -563,8 +626,15 @@ function showAllInOneDialog() {
                 positioning: selectedCut ? selectedCut.positioning : "bottom"
             };
             
-            // 選択された背景色を取得
+            // デバッグ用: 最終的なマージン設定をログ出力
+            if (settings.positioning === "center-asymmetric") {
+                log("center-asymmetric設定: 左=" + settings.leftMargin + ", 右=" + settings.rightMargin + ", 上=" + settings.topMargin + ", 下=" + settings.bottomMargin);
+            }
+            
+            // 選択された背景色を取得（デバッグ情報付き）
+            log("背景色選択状態確認中...");
             for (var i = 0; i < radioButtons.length; i++) {
+                log("ラジオボタン " + i + ": " + radioButtons[i].value);
                 if (radioButtons[i].value) {
                     if (i === ALL_IN_ONE_CONFIG.backgroundColors.length - 1) {
                         settings.backgroundColor = {
@@ -572,11 +642,19 @@ function showAllInOneDialog() {
                             hex: customColorInput.text,
                             rgb: hexToRgb(customColorInput.text)
                         };
+                        log("カスタム色選択: " + customColorInput.text);
                     } else {
                         settings.backgroundColor = ALL_IN_ONE_CONFIG.backgroundColors[i];
+                        log("プリセット色選択: " + settings.backgroundColor.name + " " + settings.backgroundColor.hex);
                     }
                     break;
                 }
+            }
+            
+            if (!settings.backgroundColor) {
+                log("警告: 背景色が選択されていません");
+                settings.backgroundColor = ALL_IN_ONE_CONFIG.backgroundColors[0]; // デフォルト色を設定
+                log("デフォルト色を適用: " + settings.backgroundColor.name);
             }
             
             return settings;
@@ -796,21 +874,29 @@ function resizeCanvasAndPosition(doc, settings) {
         // 必要なスケールを計算
         var scale = 1.0;
         if (settings.autoFit) {
-            // 左右マージンを考慮した最大幅
-            var maxWidth = settings.width - (settings.sideMargin * 2);
-            var scaleX = maxWidth / maskBounds.width;
-            
-            // 配置パターンに応じた最大高さの計算
-            var maxHeight;
-            if (settings.positioning === "bottom-top") {
-                // bottom-topパターン: 上部と下部の両マージンを考慮
+            // 配置パターンに応じたマージン計算
+            var maxWidth, maxHeight;
+            if (settings.positioning === "center-asymmetric") {
+                // 非対称マージンパターン: 左右異なるマージン、高さは全体を使用
+                maxWidth = settings.width - settings.leftMargin - settings.rightMargin;
+                maxHeight = settings.height; // 高さセンター合わせのため、全体の高さを使用
+                log("center-asymmetricパターン: 最大幅 = " + maxWidth + "px (全体" + settings.width + " - 左" + settings.leftMargin + " - 右" + settings.rightMargin + ")");
+                log("center-asymmetricパターン: 最大高さ = " + maxHeight + "px (全体の高さを使用)");
+            } else if (settings.positioning === "bottom-top") {
+                // bottom-topパターン: 上部と下部の両マージンを考慮、左右は対称
+                maxWidth = settings.width - (settings.sideMargin * 2);
                 maxHeight = settings.height - settings.topMargin - settings.bottomMargin;
+                log("bottom-topパターン: 最大幅 = " + maxWidth + "px (全体" + settings.width + " - 左右" + (settings.sideMargin * 2) + ")");
                 log("bottom-topパターン: 最大高さ = " + maxHeight + "px (全体" + settings.height + " - 上部" + settings.topMargin + " - 下部" + settings.bottomMargin + ")");
             } else {
-                // bottom-sideパターン: 下部マージンのみ考慮
+                // bottom-sideパターン: 下部マージンのみ考慮、左右は対称
+                maxWidth = settings.width - (settings.sideMargin * 2);
                 maxHeight = settings.height - settings.bottomMargin;
+                log("bottom-sideパターン: 最大幅 = " + maxWidth + "px (全体" + settings.width + " - 左右" + (settings.sideMargin * 2) + ")");
                 log("bottom-sideパターン: 最大高さ = " + maxHeight + "px (全体" + settings.height + " - 下部" + settings.bottomMargin + ")");
             }
+            
+            var scaleX = maxWidth / maskBounds.width;
             
             var scaleY = maxHeight / maskBounds.height;
             
@@ -839,10 +925,40 @@ function resizeCanvasAndPosition(doc, settings) {
         // 現在のマスク位置をログ出力
         log("現在のマスク位置: left=" + maskBounds.left + ", top=" + maskBounds.top + ", width=" + maskBounds.width + ", height=" + maskBounds.height);
         log("キャンバスサイズ: " + settings.width + "×" + settings.height + "px");
-        log("配置設定: positioning=" + settings.positioning + ", topMargin=" + settings.topMargin + ", bottomMargin=" + settings.bottomMargin + ", sideMargin=" + settings.sideMargin);
+        if (settings.positioning === "center-asymmetric") {
+            log("配置設定: positioning=" + settings.positioning + ", topMargin=" + settings.topMargin + ", bottomMargin=" + settings.bottomMargin + ", leftMargin=" + settings.leftMargin + ", rightMargin=" + settings.rightMargin);
+        } else {
+            log("配置設定: positioning=" + settings.positioning + ", topMargin=" + settings.topMargin + ", bottomMargin=" + settings.bottomMargin + ", sideMargin=" + settings.sideMargin);
+        }
         
         // プリセットの配置方式を確認
-        if (settings.positioning === "bottom-top") {
+        if (settings.positioning === "center-asymmetric") {
+            // パターン3: 完全な高さセンター合わせ + 非対称左右マージン（俯瞰用）
+            // Y軸: キャンバス全体の中央に配置
+            targetY = (settings.height - maskBounds.height) / 2;
+            
+            // X軸: 非対称マージンを考慮した配置
+            var availableWidth = settings.width - settings.leftMargin - settings.rightMargin;
+            targetX = settings.leftMargin + (availableWidth - maskBounds.width) / 2;
+            
+            log("配置パターン: 完全高さセンター＋非対称マージン");
+            log("  キャンバス高さ: " + settings.height + "px, マスク高さ: " + maskBounds.height + "px");
+            log("  利用可能幅: " + availableWidth + "px (キャンバス" + settings.width + " - 左" + settings.leftMargin + " - 右" + settings.rightMargin + ")");
+            
+            var centerOffsetY = (settings.height - maskBounds.height) / 2;
+            var centerOffsetX = (availableWidth - maskBounds.width) / 2;
+            log("  完全中央配置Y: " + centerOffsetY + "px = (キャンバス" + settings.height + " - マスク高さ" + maskBounds.height + ") ÷ 2");
+            log("  非対称中央配置X: " + centerOffsetX + "px = (利用可能幅" + availableWidth + " - マスク幅" + maskBounds.width + ") ÷ 2");
+            log("  目標Y: " + targetY + " (完全中央)");
+            log("  目標X: " + targetX + " (左" + settings.leftMargin + " + 中央オフセット" + centerOffsetX + ")");
+            
+            // 検証: 上下の距離が等しいか確認
+            var distanceFromTop = targetY;
+            var distanceFromBottom = settings.height - targetY - maskBounds.height;
+            log("  検証: 上部からマスクまでの距離 = " + distanceFromTop + "px");
+            log("  検証: マスクから下部までの距離 = " + distanceFromBottom + "px");
+            log("  検証: 完全センター判定 = " + (Math.abs(distanceFromTop - distanceFromBottom) < 1 ? "OK" : "NG"));
+        } else if (settings.positioning === "bottom-top") {
             // パターン2: 下部マージン + 上部マージン（Y軸中央配置）
             var availableHeight = settings.height - settings.topMargin - settings.bottomMargin;
             targetY = settings.topMargin + (availableHeight - maskBounds.height) / 2;
