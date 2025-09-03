@@ -9,7 +9,7 @@ var ALL_IN_ONE_CONFIG = {
     
     // キャンバス設定
     defaultCanvasWidth: 2210,
-    defaultCanvasHeight: 3315,
+    defaultCanvasHeight: 2975,
     resolution: 72,
     
     // 画像配置設定
@@ -24,11 +24,62 @@ var ALL_IN_ONE_CONFIG = {
         { name: "カスタム", hex: "", rgb: [128, 128, 128] }
     ],
     
-    // プリセットサイズ
-    presetSizes: [
-        { name: "Michael Kors (2210×3315)", width: 2210, height: 3315 },
-        { name: "カスタム（手動入力）", width: 0, height: 0 }
+    // ブランド設定（キャンバスサイズと背景色）
+    brands: [
+        {
+            name: "Michael Kors",
+            width: 2210,
+            height: 2975,
+            defaultBgColor: 1 // ライトグレー
+        }
     ],
+    
+    // 商品カテゴリーとカット設定（画像配置）
+    // positioning: "bottom-side" = 下部マージン + 左右マージン
+    // positioning: "bottom-top" = 下部マージン + 上部マージン（Y軸の中央配置）
+    categories: [
+        {
+            name: "シューズ",
+            cuts: [
+                {
+                    name: "正面",
+                    positioning: "bottom-side",  // パターン1: 下部＋左右マージン
+                    bottomMargin: 253,
+                    sideMargin: 150
+                }
+            ]
+        },
+        {
+            name: "二つ折り財布・ミニ財布",
+            cuts: [
+                {
+                    name: "正面・背面・斜め",
+                    positioning: "bottom-top",    // パターン2: 下部＋上部マージン
+                    topMargin: 1933,
+                    bottomMargin: 230
+                }
+            ]
+        }
+        // ここに今後追加される商品カテゴリー例：
+        // {
+        //     name: "長財布",
+        //     cuts: [
+        //         { name: "正面", positioning: "bottom-top", topMargin: 1500, bottomMargin: 200 },
+        //         { name: "開いた状態", positioning: "bottom-top", topMargin: 1200, bottomMargin: 300 }
+        //     ]
+        // },
+        // {
+        //     name: "バッグ",
+        //     cuts: [
+        //         { name: "正面", positioning: "bottom-side", bottomMargin: 300, sideMargin: 200 },
+        //         { name: "側面", positioning: "bottom-side", bottomMargin: 300, sideMargin: 250 },
+        //         { name: "上から", positioning: "bottom-top", topMargin: 1000, bottomMargin: 500 }
+        //     ]
+        // }
+    ],
+    
+    // カスタム設定
+    customPreset: { name: "カスタム（手動入力）", width: 0, height: 0, defaultBgColor: 0 },
     
     showProgress: true
 };
@@ -37,6 +88,47 @@ var ALL_IN_ONE_CONFIG = {
 var scriptFolder = new File($.fileName).parent;
 var inputFolder = new Folder(scriptFolder + "/" + ALL_IN_ONE_CONFIG.inputFolderName);
 var outputFolder = new Folder(scriptFolder + "/" + ALL_IN_ONE_CONFIG.outputFolderName);
+
+// ========== DialogModes互換性ヘルパー ==========
+function safeSetDisplayDialogs() {
+    try {
+        app.displayDialogs = DialogModes.NO;
+        log("DialogModes.NO使用成功");
+        return true;
+    } catch (e) {
+        log("DialogModes.NO使用不可、ダイアログ表示を継続: " + e.toString());
+        return false;
+    }
+}
+
+function getDialogModeNO() {
+    // executeActionでDialogModes.NOが必要な場合の安全な値
+    try {
+        return DialogModes.NO;
+    } catch (e) {
+        // DialogModesが使用できない場合は文字列を返す（Photoshopが解釈可能）
+        log("DialogModes.NO取得失敗、文字列'NO'を返します");
+        return "NO";
+    }
+}
+
+function safeExecuteAction(actionID, descriptor, dialogMode) {
+    try {
+        if (dialogMode !== undefined) {
+            executeAction(actionID, descriptor, dialogMode);
+        } else {
+            executeAction(actionID, descriptor);
+        }
+    } catch (e) {
+        // DialogModeでエラーの場合、DialogMode無しで実行
+        log("DialogMode付き実行失敗、Dialog無しで再実行: " + e.toString());
+        try {
+            executeAction(actionID, descriptor);
+        } catch (e2) {
+            throw e2; // 再実行でもエラーの場合は元のエラーを投げる
+        }
+    }
+}
 
 // ========== ログ ==========
 function log(message) {
@@ -55,242 +147,450 @@ function log(message) {
 
 // ========== 統合設定ダイアログ ==========
 function showAllInOneDialog() {
-    var dialog = new Window("dialog", "統合処理設定 - 切り抜きから背景色追加まで");
-    dialog.orientation = "column";
-    dialog.alignChildren = "fill";
-    
-    // ========== 処理選択セクション ==========
-    var processPanel = dialog.add("panel", undefined, "処理選択");
-    processPanel.orientation = "column";
-    processPanel.alignChildren = "left";
-    
-    var maskCheckbox = processPanel.add("checkbox", undefined, "AI背景マスク作成");
-    maskCheckbox.value = true;
-    
-    var resizeCheckbox = processPanel.add("checkbox", undefined, "キャンバスサイズ変更と画像配置");
-    resizeCheckbox.value = true;
-    
-    var bgColorCheckbox = processPanel.add("checkbox", undefined, "背景色追加");
-    bgColorCheckbox.value = true;
-    
-    // ========== キャンバスサイズセクション ==========
-    var sizePanel = dialog.add("panel", undefined, "キャンバスサイズ設定");
-    sizePanel.orientation = "column";
-    sizePanel.alignChildren = "left";
-    
-    // プリセット選択
-    var presetGroup = sizePanel.add("group");
-    presetGroup.add("statictext", undefined, "プリセット:");
-    var presetDropdown = presetGroup.add("dropdownlist");
-    for (var i = 0; i < ALL_IN_ONE_CONFIG.presetSizes.length; i++) {
-        presetDropdown.add("item", ALL_IN_ONE_CONFIG.presetSizes[i].name);
-    }
-    presetDropdown.selection = 0;
-    
-    // カスタムサイズ入力
-    var customSizePanel = sizePanel.add("panel", undefined, "カスタムサイズ（手動入力）");
-    customSizePanel.enabled = false;
-    customSizePanel.orientation = "column";
-    
-    var customSizeRow1 = customSizePanel.add("group");
-    customSizeRow1.add("statictext", undefined, "幅:");
-    var widthInput = customSizeRow1.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasWidth));
-    widthInput.characters = 8;
-    customSizeRow1.add("statictext", undefined, "px");
-    
-    var customSizeRow2 = customSizePanel.add("group");
-    customSizeRow2.add("statictext", undefined, "高さ:");
-    var heightInput = customSizeRow2.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasHeight));
-    heightInput.characters = 8;
-    customSizeRow2.add("statictext", undefined, "px");
-    
-    var customSizeNote = customSizePanel.add("statictext", undefined, "※「カスタム（手動入力）」選択時のみ有効");
     try {
-        customSizeNote.graphics.font = ScriptUI.newFont("dialog", ScriptUI.FontStyle.REGULAR, 10);
-    } catch (e) {
-        // フォント設定エラーは無視
-    }
-    
-    // ========== 画像配置セクション ==========
-    var positionPanel = dialog.add("panel", undefined, "画像配置設定");
-    positionPanel.orientation = "column";
-    positionPanel.alignChildren = "left";
-    
-    // 下部マージン
-    var bottomMarginGroup = positionPanel.add("group");
-    bottomMarginGroup.add("statictext", undefined, "下部マージン:");
-    var bottomMarginInput = bottomMarginGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultBottomMargin));
-    bottomMarginInput.characters = 6;
-    bottomMarginGroup.add("statictext", undefined, "px");
-    
-    // 左右マージン
-    var sideMarginGroup = positionPanel.add("group");
-    sideMarginGroup.add("statictext", undefined, "左右マージン:");
-    var sideMarginInput = sideMarginGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultSideMargin));
-    sideMarginInput.characters = 6;
-    sideMarginGroup.add("statictext", undefined, "px");
-    
-    // 配置オプション
-    var autoFitCheckbox = positionPanel.add("checkbox", undefined, "縦横比を保持して自動調整");
-    autoFitCheckbox.value = ALL_IN_ONE_CONFIG.autoFit;
-    
-    // ========== 影生成セクション ==========
-    var shadowPanel = dialog.add("panel", undefined, "影生成設定（オプション）");
-    shadowPanel.orientation = "column";
-    shadowPanel.alignChildren = "left";
-    
-    var shadowCheckbox = shadowPanel.add("checkbox", undefined, "商品の影を生成");
-    shadowCheckbox.value = false;
-    
-    var shadowOptionsGroup = shadowPanel.add("group");
-    shadowOptionsGroup.enabled = false;
-    shadowOptionsGroup.orientation = "column";
-    shadowOptionsGroup.alignChildren = "left";
-    
-    var shadowBlurGroup = shadowOptionsGroup.add("group");
-    shadowBlurGroup.add("statictext", undefined, "境界ぼかし:");
-    var shadowBlurInput = shadowBlurGroup.add("edittext", undefined, "450");
-    shadowBlurInput.characters = 4;
-    shadowBlurGroup.add("statictext", undefined, "px (下部境界)");
-    
-    var shadowLevelsGroup = shadowOptionsGroup.add("group");
-    shadowLevelsGroup.add("statictext", undefined, "ハイライト:");
-    var shadowLevelsInput = shadowLevelsGroup.add("edittext", undefined, "215");
-    shadowLevelsInput.characters = 4;
-    shadowLevelsGroup.add("statictext", undefined, "(レベル補正)");
-    
-    // ========== 背景色セクション ==========
-    var colorPanel = dialog.add("panel", undefined, "背景色設定");
-    colorPanel.orientation = "column";
-    colorPanel.alignChildren = "left";
-    
-    var radioButtons = [];
-    for (var i = 0; i < ALL_IN_ONE_CONFIG.backgroundColors.length; i++) {
-        var color = ALL_IN_ONE_CONFIG.backgroundColors[i];
-        var radio = colorPanel.add("radiobutton", undefined, color.name + " (" + color.hex + ")");
-        if (i === 0) radio.value = true;
-        radioButtons.push(radio);
-    }
-    
-    // カスタム色入力
-    var customColorGroup = colorPanel.add("group");
-    customColorGroup.add("statictext", undefined, "カスタム色:");
-    var customColorInput = customColorGroup.add("edittext", undefined, "#F6F6F6");
-    customColorInput.characters = 10;
-    
-    // ========== ボタン ==========
-    var buttonGroup = dialog.add("group");
-    buttonGroup.alignment = "center";
-    var okButton = buttonGroup.add("button", undefined, "処理開始");
-    var cancelButton = buttonGroup.add("button", undefined, "キャンセル");
-    
-    // ========== イベントハンドラ ==========
-    presetDropdown.onChange = function() {
-        var isCustom = presetDropdown.selection.index === ALL_IN_ONE_CONFIG.presetSizes.length - 1;
-        customSizePanel.enabled = isCustom;
+        var startTime = new Date().getTime();
+        log("ダイアログ作成開始: " + startTime);
         
-        if (!isCustom) {
-            var preset = ALL_IN_ONE_CONFIG.presetSizes[presetDropdown.selection.index];
-            widthInput.text = String(preset.width);
-            heightInput.text = String(preset.height);
-        } else {
-            // カスタム選択時はデフォルト値をクリア
-            widthInput.text = "";
-            heightInput.text = "";
+        // 階層選択ダイアログ
+        log("Windowオブジェクト作成中...");
+        var dialog = new Window("dialog", "統合処理設定 - 切り抜きから背景色追加まで");
+        dialog.orientation = "column";
+        dialog.alignChildren = "fill";
+        log("Window作成完了: " + (new Date().getTime() - startTime) + "ms");
+    
+        // ========== 処理選択セクション ==========
+        log("処理選択パネル作成中...");
+        var processPanel = dialog.add("panel", undefined, "処理選択");
+        processPanel.orientation = "column";
+        processPanel.alignChildren = "left";
+        
+        var maskCheckbox = processPanel.add("checkbox", undefined, "AI背景マスク作成");
+        maskCheckbox.value = true;
+        
+        var resizeCheckbox = processPanel.add("checkbox", undefined, "キャンバスサイズ変更と画像配置");
+        resizeCheckbox.value = true;
+        
+        var bgColorCheckbox = processPanel.add("checkbox", undefined, "背景色追加");
+        bgColorCheckbox.value = true;
+        log("処理選択パネル完了: " + (new Date().getTime() - startTime) + "ms");
+        
+        // ========== キャンバスサイズセクション ==========
+        log("キャンバスサイズパネル作成中...");
+        var sizePanel = dialog.add("panel", undefined, "キャンバスサイズ設定");
+        sizePanel.orientation = "column";
+        sizePanel.alignChildren = "left";
+        
+        // ブランド選択（ListBoxで高速化）
+        log("ブランドリスト作成中...");
+        var brandGroup = sizePanel.add("group");
+        brandGroup.orientation = "column";
+        brandGroup.add("statictext", undefined, "ブランド:");
+        
+        // ListBoxを使用してパフォーマンス向上
+        var brandNames = [];
+        for (var i = 0; i < ALL_IN_ONE_CONFIG.brands.length; i++) {
+            brandNames.push(ALL_IN_ONE_CONFIG.brands[i].name);
         }
-    };
-    
-    resizeCheckbox.onClick = function() {
-        sizePanel.enabled = resizeCheckbox.value;
-        positionPanel.enabled = resizeCheckbox.value;
-    };
-    
-    bgColorCheckbox.onClick = function() {
-        colorPanel.enabled = bgColorCheckbox.value;
-    };
-    
-    shadowCheckbox.onClick = function() {
-        shadowOptionsGroup.enabled = shadowCheckbox.value;
-    };
-    
-    okButton.onClick = function() {
-        // カスタムサイズ検証
-        var isCustom = presetDropdown.selection.index === ALL_IN_ONE_CONFIG.presetSizes.length - 1;
-        if (isCustom && resizeCheckbox.value) {
-            var width = parseInt(widthInput.text);
-            var height = parseInt(heightInput.text);
-            
-            if (isNaN(width) || width <= 0 || width > 20000) {
-                alert("幅は1から20000の数値を入力してください。");
-                return;
-            }
-            
-            if (isNaN(height) || height <= 0 || height > 20000) {
-                alert("高さは1から20000の数値を入力してください。");
-                return;
+        brandNames.push("カスタム（手動入力）");
+        
+        var brandDropdown = brandGroup.add("listbox", undefined, brandNames);
+        brandDropdown.preferredSize.height = 60; // 3行程度の高さに制限
+        brandDropdown.selection = 0;
+        log("ブランドリスト完了: " + (new Date().getTime() - startTime) + "ms");
+        
+        // 商品カテゴリー選択（ListBoxで高速化）
+        var categoryGroup = sizePanel.add("group");
+        categoryGroup.orientation = "column";
+        categoryGroup.add("statictext", undefined, "商品カテゴリー:");
+        
+        // 事前にカテゴリー名を配列で準備
+        var categoryItems = [];
+        for (var i = 0; i < ALL_IN_ONE_CONFIG.categories.length; i++) {
+            categoryItems.push(ALL_IN_ONE_CONFIG.categories[i].name);
+        }
+        var categoryDropdown = categoryGroup.add("listbox", undefined, categoryItems);
+        categoryDropdown.preferredSize.height = 80; // 4行程度の高さに制限
+        categoryDropdown.selection = 0;
+        
+        // カット選択（ListBoxで高速化）
+        var cutGroup = sizePanel.add("group");
+        cutGroup.orientation = "column";
+        cutGroup.add("statictext", undefined, "カット:");
+        var cutDropdown = cutGroup.add("listbox", undefined, []);
+        cutDropdown.preferredSize.height = 60; // 3行程度の高さに制限
+        
+        // カスタムサイズ入力
+        var customSizePanel = sizePanel.add("panel", undefined, "カスタムサイズ（手動入力）");
+        customSizePanel.enabled = false;
+        customSizePanel.orientation = "column";
+        
+        var customSizeRow1 = customSizePanel.add("group");
+        customSizeRow1.add("statictext", undefined, "幅:");
+        var widthInput = customSizeRow1.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasWidth));
+        widthInput.characters = 8;
+        customSizeRow1.add("statictext", undefined, "px");
+        
+        var customSizeRow2 = customSizePanel.add("group");
+        customSizeRow2.add("statictext", undefined, "高さ:");
+        var heightInput = customSizeRow2.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultCanvasHeight));
+        heightInput.characters = 8;
+        customSizeRow2.add("statictext", undefined, "px");
+        
+        var customSizeNote = customSizePanel.add("statictext", undefined, "※「カスタム（手動入力）」選択時のみ有効");
+        
+        // ========== 画像配置セクション ==========
+        var positionPanel = dialog.add("panel", undefined, "画像配置設定");
+        positionPanel.orientation = "column";
+        positionPanel.alignChildren = "left";
+        
+        // 上部マージン
+        var topMarginGroup = positionPanel.add("group");
+        topMarginGroup.add("statictext", undefined, "上部マージン:");
+        var topMarginInput = topMarginGroup.add("edittext", undefined, "0");
+        topMarginInput.characters = 6;
+        topMarginGroup.add("statictext", undefined, "px");
+        
+        // 下部マージン
+        var bottomMarginGroup = positionPanel.add("group");
+        bottomMarginGroup.add("statictext", undefined, "下部マージン:");
+        var bottomMarginInput = bottomMarginGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultBottomMargin));
+        bottomMarginInput.characters = 6;
+        bottomMarginGroup.add("statictext", undefined, "px");
+        
+        // 左右マージン
+        var sideMarginGroup = positionPanel.add("group");
+        sideMarginGroup.add("statictext", undefined, "左右マージン:");
+        var sideMarginInput = sideMarginGroup.add("edittext", undefined, String(ALL_IN_ONE_CONFIG.defaultSideMargin));
+        sideMarginInput.characters = 6;
+        sideMarginGroup.add("statictext", undefined, "px");
+        
+        // 配置オプション
+        var autoFitCheckbox = positionPanel.add("checkbox", undefined, "縦横比を保持して自動調整");
+        autoFitCheckbox.value = ALL_IN_ONE_CONFIG.autoFit;
+        
+        // ========== 影生成セクション ==========
+        var shadowPanel = dialog.add("panel", undefined, "影生成設定（オプション）");
+        shadowPanel.orientation = "column";
+        shadowPanel.alignChildren = "left";
+        
+        var shadowCheckbox = shadowPanel.add("checkbox", undefined, "商品の影を生成");
+        shadowCheckbox.value = false;
+        
+        var shadowOptionsGroup = shadowPanel.add("group");
+        shadowOptionsGroup.enabled = false;
+        shadowOptionsGroup.orientation = "column";
+        shadowOptionsGroup.alignChildren = "left";
+        
+        var shadowBlurGroup = shadowOptionsGroup.add("group");
+        shadowBlurGroup.add("statictext", undefined, "境界ぼかし:");
+        var shadowBlurInput = shadowBlurGroup.add("edittext", undefined, "450");
+        shadowBlurInput.characters = 4;
+        shadowBlurGroup.add("statictext", undefined, "px (下部境界)");
+        
+        var shadowLevelsGroup = shadowOptionsGroup.add("group");
+        shadowLevelsGroup.add("statictext", undefined, "ハイライト:");
+        var shadowLevelsInput = shadowLevelsGroup.add("edittext", undefined, "215");
+        shadowLevelsInput.characters = 4;
+        shadowLevelsGroup.add("statictext", undefined, "(レベル補正)");
+        
+        // ========== 背景色セクション ==========
+        var colorPanel = dialog.add("panel", undefined, "背景色設定");
+        colorPanel.orientation = "column";
+        colorPanel.alignChildren = "left";
+        
+        var radioButtons = [];
+        for (var i = 0; i < ALL_IN_ONE_CONFIG.backgroundColors.length; i++) {
+            var color = ALL_IN_ONE_CONFIG.backgroundColors[i];
+            var radio = colorPanel.add("radiobutton", undefined, color.name + " (" + color.hex + ")");
+            if (i === 0) radio.value = true;
+            radioButtons.push(radio);
+        }
+        
+        // カスタム色入力
+        var customColorGroup = colorPanel.add("group");
+        customColorGroup.add("statictext", undefined, "カスタム色:");
+        var customColorInput = customColorGroup.add("edittext", undefined, "#F6F6F6");
+        customColorInput.characters = 10;
+        
+        // ========== ボタン ==========
+        var buttonGroup = dialog.add("group");
+        buttonGroup.alignment = "center";
+        var okButton = buttonGroup.add("button", undefined, "処理開始");
+        var cancelButton = buttonGroup.add("button", undefined, "キャンセル");
+        
+        // ========== 階層選択の初期化（最適化版） ==========
+        function updateBrandSettings() {
+            try {
+                var selectedIndex = brandDropdown.selection ? brandDropdown.selection.index : 0;
+                var isCustom = selectedIndex === ALL_IN_ONE_CONFIG.brands.length;
+                customSizePanel.enabled = isCustom;
+                
+                if (!isCustom && selectedIndex < ALL_IN_ONE_CONFIG.brands.length) {
+                    var brand = ALL_IN_ONE_CONFIG.brands[selectedIndex];
+                    
+                    // ブランドのキャンバスサイズを設定
+                    widthInput.text = String(brand.width);
+                    heightInput.text = String(brand.height);
+                    
+                    // ブランドのデフォルト背景色を設定
+                    if (brand.defaultBgColor !== undefined && brand.defaultBgColor < radioButtons.length) {
+                        // 一度にすべてfalseにしてから選択
+                        for (var i = 0; i < radioButtons.length; i++) {
+                            radioButtons[i].value = (i === brand.defaultBgColor);
+                        }
+                    }
+                }
+            } catch (e) {
+                log("ブランド設定更新エラー: " + e.toString());
             }
         }
         
-        // マージン検証
-        if (resizeCheckbox.value) {
-            var bottomMargin = parseInt(bottomMarginInput.text);
-            var sideMargin = parseInt(sideMarginInput.text);
-            
-            if (isNaN(bottomMargin) || bottomMargin < 0) {
-                alert("下部マージンは0以上の数値を入力してください。");
-                return;
-            }
-            
-            if (isNaN(sideMargin) || sideMargin < 0) {
-                alert("左右マージンは0以上の数値を入力してください。");
-                return;
+        function updateCuts() {
+            try {
+                var categoryIndex = categoryDropdown.selection ? categoryDropdown.selection.index : 0;
+                if (categoryIndex < 0 || categoryIndex >= ALL_IN_ONE_CONFIG.categories.length) return;
+                
+                var category = ALL_IN_ONE_CONFIG.categories[categoryIndex];
+                
+                // ListBoxの項目を効率的に更新
+                cutDropdown.removeAll();
+                
+                // 事前に配列を作成してから一括追加（パフォーマンス向上）
+                var cutNames = [];
+                for (var i = 0; i < category.cuts.length; i++) {
+                    cutNames.push(category.cuts[i].name);
+                }
+                
+                // 一括でアイテム追加
+                for (var i = 0; i < cutNames.length; i++) {
+                    cutDropdown.add("item", cutNames[i]);
+                }
+                
+                // 選択を設定
+                if (cutDropdown.items.length > 0) {
+                    cutDropdown.selection = 0;
+                    updatePositionSettings();
+                }
+            } catch (e) {
+                log("カット更新エラー: " + e.toString());
             }
         }
         
-        dialog.close(1);
-    };
-    
-    cancelButton.onClick = function() {
-        dialog.close(0);
-    };
-    
-    // ダイアログ表示
-    var result = dialog.show();
-    if (result === 1) {
-        var settings = {
-            processMask: maskCheckbox.value,
-            processResize: resizeCheckbox.value,
-            processBgColor: bgColorCheckbox.value,
-            processShadow: shadowCheckbox.value,
-            width: parseInt(widthInput.text),
-            height: parseInt(heightInput.text),
-            bottomMargin: parseInt(bottomMarginInput.text),
-            sideMargin: parseInt(sideMarginInput.text),
-            autoFit: autoFitCheckbox.value,
-            shadowBlur: parseInt(shadowBlurInput.text),
-            shadowHighlight: parseInt(shadowLevelsInput.text),
-            backgroundColor: null
+        function updatePositionSettings() {
+            try {
+                var categoryIndex = categoryDropdown.selection ? categoryDropdown.selection.index : 0;
+                var cutIndex = cutDropdown.selection ? cutDropdown.selection.index : 0;
+                
+                if (categoryIndex < 0 || cutIndex < 0 || 
+                    categoryIndex >= ALL_IN_ONE_CONFIG.categories.length) return;
+                
+                var category = ALL_IN_ONE_CONFIG.categories[categoryIndex];
+                if (cutIndex >= category.cuts.length) return;
+                
+                var cut = category.cuts[cutIndex];
+                
+                // 配置設定を一括適用
+                topMarginInput.text = cut.topMargin !== undefined ? String(cut.topMargin) : "0";
+                bottomMarginInput.text = cut.bottomMargin !== undefined ? String(cut.bottomMargin) : String(ALL_IN_ONE_CONFIG.defaultBottomMargin);
+                sideMarginInput.text = cut.sideMargin !== undefined ? String(cut.sideMargin) : String(ALL_IN_ONE_CONFIG.defaultSideMargin);
+            } catch (e) {
+                log("配置設定更新エラー: " + e.toString());
+            }
+        }
+        
+        // ========== イベントハンドラ ==========
+        log("イベントハンドラ設定中...");
+        brandDropdown.onChange = function() {
+            try {
+                updateBrandSettings();
+            } catch (e) {
+                log("ブランド変更エラー: " + e.toString());
+            }
         };
         
-        // 選択された背景色を取得
-        for (var i = 0; i < radioButtons.length; i++) {
-            if (radioButtons[i].value) {
-                if (i === ALL_IN_ONE_CONFIG.backgroundColors.length - 1) {
-                    settings.backgroundColor = {
-                        name: "カスタム",
-                        hex: customColorInput.text,
-                        rgb: hexToRgb(customColorInput.text)
-                    };
-                } else {
-                    settings.backgroundColor = ALL_IN_ONE_CONFIG.backgroundColors[i];
+        categoryDropdown.onChange = function() {
+            try {
+                updateCuts();
+            } catch (e) {
+                log("カテゴリ変更エラー: " + e.toString());
+            }
+        };
+        
+        cutDropdown.onChange = function() {
+            try {
+                updatePositionSettings();
+            } catch (e) {
+                log("カット変更エラー: " + e.toString());
+            }
+        };
+        
+        resizeCheckbox.onClick = function() {
+            sizePanel.enabled = resizeCheckbox.value;
+            positionPanel.enabled = resizeCheckbox.value;
+        };
+        
+        bgColorCheckbox.onClick = function() {
+            colorPanel.enabled = bgColorCheckbox.value;
+        };
+        
+        shadowCheckbox.onClick = function() {
+            shadowOptionsGroup.enabled = shadowCheckbox.value;
+        };
+        log("イベントハンドラ完了: " + (new Date().getTime() - startTime) + "ms");
+        
+        okButton.onClick = function() {
+            log("処理開始ボタンがクリックされました");
+            
+            // カスタムサイズ検証
+            var isCustom = brandDropdown.selection.index === ALL_IN_ONE_CONFIG.brands.length;
+            if (isCustom && resizeCheckbox.value) {
+                var width = parseInt(widthInput.text);
+                var height = parseInt(heightInput.text);
+                
+                if (isNaN(width) || width <= 0 || width > 20000) {
+                    alert("幅は1から20000の数値を入力してください。");
+                    return;
                 }
-                break;
+                
+                if (isNaN(height) || height <= 0 || height > 20000) {
+                    alert("高さは1から20000の数値を入力してください。");
+                    return;
+                }
+            }
+            
+            // マージン検証
+            if (resizeCheckbox.value) {
+                var topMargin = parseInt(topMarginInput.text);
+                var bottomMargin = parseInt(bottomMarginInput.text);
+                var sideMargin = parseInt(sideMarginInput.text);
+                
+                if (isNaN(topMargin) || topMargin < 0) {
+                    alert("上部マージンは0以上の数値を入力してください。");
+                    return;
+                }
+                
+                if (isNaN(bottomMargin) || bottomMargin < 0) {
+                    alert("下部マージンは0以上の数値を入力してください。");
+                    return;
+                }
+                
+                if (isNaN(sideMargin) || sideMargin < 0) {
+                    alert("左右マージンは0以上の数値を入力してください。");
+                    return;
+                }
+            }
+            
+            dialog.close(1);
+        };
+        
+        cancelButton.onClick = function() {
+            log("キャンセルボタンがクリックされました");
+            dialog.close(0);
+        };
+        
+        // ========== 軽量初期化 ==========
+        log("初期化開始...");
+        
+        // 最初のカテゴリーのカット設定
+        if (ALL_IN_ONE_CONFIG.categories.length > 0 && ALL_IN_ONE_CONFIG.categories[0].cuts.length > 0) {
+            var firstCategory = ALL_IN_ONE_CONFIG.categories[0];
+            for (var i = 0; i < firstCategory.cuts.length; i++) {
+                cutDropdown.add("item", firstCategory.cuts[i].name);
+            }
+            if (cutDropdown.items.length > 0) {
+                cutDropdown.selection = 0;
             }
         }
+        log("カット初期化完了: " + (new Date().getTime() - startTime) + "ms");
         
-        return settings;
+        // デフォルトブランド設定を直接適用（関数呼び出しを避ける）
+        if (ALL_IN_ONE_CONFIG.brands.length > 0) {
+            var defaultBrand = ALL_IN_ONE_CONFIG.brands[0];
+            widthInput.text = String(defaultBrand.width);
+            heightInput.text = String(defaultBrand.height);
+            
+            // デフォルト背景色設定
+            if (defaultBrand.defaultBgColor !== undefined && defaultBrand.defaultBgColor < radioButtons.length) {
+                radioButtons[defaultBrand.defaultBgColor].value = true;
+            }
+        }
+        log("ブランド初期化完了: " + (new Date().getTime() - startTime) + "ms");
+        
+        // デフォルト配置設定を直接適用
+        if (ALL_IN_ONE_CONFIG.categories.length > 0 && ALL_IN_ONE_CONFIG.categories[0].cuts.length > 0) {
+            var defaultCut = ALL_IN_ONE_CONFIG.categories[0].cuts[0];
+            topMarginInput.text = defaultCut.topMargin !== undefined ? String(defaultCut.topMargin) : "0";
+            bottomMarginInput.text = defaultCut.bottomMargin !== undefined ? String(defaultCut.bottomMargin) : String(ALL_IN_ONE_CONFIG.defaultBottomMargin);
+            sideMarginInput.text = defaultCut.sideMargin !== undefined ? String(defaultCut.sideMargin) : String(ALL_IN_ONE_CONFIG.defaultSideMargin);
+        }
+        log("配置初期化完了: " + (new Date().getTime() - startTime) + "ms");
+        
+        // ダイアログ表示
+        log("ダイアログ表示前 総所要時間: " + (new Date().getTime() - startTime) + "ms");
+        var result = dialog.show();
+        log("ダイアログ結果: " + result + " 表示完了時間: " + (new Date().getTime() - startTime) + "ms");
+        
+        if (result === 1) {
+            // 選択されたカットの配置情報を取得
+            var selectedCut = null;
+            var isCustom = brandDropdown.selection.index === ALL_IN_ONE_CONFIG.brands.length;
+            if (!isCustom) {
+                var categoryIndex = categoryDropdown.selection ? categoryDropdown.selection.index : 0;
+                var cutIndex = cutDropdown.selection ? cutDropdown.selection.index : 0;
+                if (categoryIndex >= 0 && cutIndex >= 0 && categoryIndex < ALL_IN_ONE_CONFIG.categories.length) {
+                    var category = ALL_IN_ONE_CONFIG.categories[categoryIndex];
+                    if (cutIndex < category.cuts.length) {
+                        selectedCut = category.cuts[cutIndex];
+                    }
+                }
+            }
+            
+            var settings = {
+                processMask: maskCheckbox.value,
+                processResize: resizeCheckbox.value,
+                processBgColor: bgColorCheckbox.value,
+                processShadow: shadowCheckbox.value,
+                width: parseInt(widthInput.text),
+                height: parseInt(heightInput.text),
+                topMargin: parseInt(topMarginInput.text),
+                bottomMargin: parseInt(bottomMarginInput.text),
+                sideMargin: parseInt(sideMarginInput.text),
+                autoFit: autoFitCheckbox.value,
+                shadowBlur: parseInt(shadowBlurInput.text),
+                shadowHighlight: parseInt(shadowLevelsInput.text),
+                backgroundColor: null,
+                // 選択されたカットの配置設定を追加
+                positioning: selectedCut ? selectedCut.positioning : "bottom"
+            };
+            
+            // 選択された背景色を取得
+            for (var i = 0; i < radioButtons.length; i++) {
+                if (radioButtons[i].value) {
+                    if (i === ALL_IN_ONE_CONFIG.backgroundColors.length - 1) {
+                        settings.backgroundColor = {
+                            name: "カスタム",
+                            hex: customColorInput.text,
+                            rgb: hexToRgb(customColorInput.text)
+                        };
+                    } else {
+                        settings.backgroundColor = ALL_IN_ONE_CONFIG.backgroundColors[i];
+                    }
+                    break;
+                }
+            }
+            
+            return settings;
+        }
+        return null;
+        
+    } catch (e) {
+        log("ダイアログエラー: " + e.toString());
+        log("エラー詳細: " + e.message);
+        if (e.line) log("エラー行: " + e.line);
+        if (e.source) log("エラー箇所: " + e.source);
+        alert("ダイアログ作成エラー: " + e.toString() + "\n詳細: " + e.message);
+        return null;
     }
-    return null;
 }
 
 // ========== 16進数からRGB変換 ==========
@@ -354,7 +654,7 @@ function createBackgroundMask(doc) {
             var idUsrMskType = stringIDToTypeID("userMaskType");
             var idRvlS = charIDToTypeID("RvlS");
             desc.putEnumerated(idUsng, idUsrMskType, idRvlS);
-            executeAction(idMk, desc, DialogModes.NO);
+            safeExecuteAction(idMk, desc, getDialogModeNO());
             
             log("レイヤーマスク追加成功");
         } catch (e) {
@@ -381,17 +681,17 @@ function selectSubject(doc) {
     desc.putBoolean(stringIDToTypeID("sampleAllLayers"), false);
     
     try {
-        executeAction(idautoCutout, desc, DialogModes.NO);
+        safeExecuteAction(idautoCutout, desc, getDialogModeNO());
     } catch (e) {
         try {
             var idAS = stringIDToTypeID("autoCutout");
             var desc2 = new ActionDescriptor();
             desc2.putBoolean(stringIDToTypeID("sampleAllLayers"), false);
-            executeAction(idAS, desc2, DialogModes.NO);
+            safeExecuteAction(idAS, desc2, getDialogModeNO());
         } catch (e2) {
             try {
                 var idSelectSubject = charIDToTypeID("SlSb");
-                executeAction(idSelectSubject, undefined, DialogModes.NO);
+                safeExecuteAction(idSelectSubject, undefined, getDialogModeNO());
             } catch (e3) {
                 executeQuickAction();
             }
@@ -405,7 +705,7 @@ function executeQuickAction() {
     var desc = new ActionDescriptor();
     var idActn = stringIDToTypeID("action");
     desc.putString(idActn, "removeBackground");
-    executeAction(idQckA, desc, DialogModes.NO);
+    safeExecuteAction(idQckA, desc, getDialogModeNO());
 }
 
 // ========== マスクの境界を取得 ==========
@@ -420,7 +720,7 @@ function getMaskBounds(doc) {
             ref.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
             desc.putReference(charIDToTypeID("null"), ref);
             desc.putBoolean(charIDToTypeID("MkVs"), false);
-            executeAction(charIDToTypeID("slct"), desc, DialogModes.NO);
+            safeExecuteAction(charIDToTypeID("slct"), desc, getDialogModeNO());
             hasLayerMask = true;
         } catch (e) {
             hasLayerMask = false;
@@ -434,7 +734,7 @@ function getMaskBounds(doc) {
             var ref2 = new ActionReference();
             ref2.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
             desc.putReference(charIDToTypeID("T   "), ref2);
-            executeAction(charIDToTypeID("setd"), desc, DialogModes.NO);
+            safeExecuteAction(charIDToTypeID("setd"), desc, getDialogModeNO());
             
             var bounds = doc.selection.bounds;
             doc.selection.deselect();
@@ -443,7 +743,7 @@ function getMaskBounds(doc) {
             var ref3 = new ActionReference();
             ref3.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("RGB "));
             desc2.putReference(charIDToTypeID("null"), ref3);
-            executeAction(charIDToTypeID("slct"), desc2, DialogModes.NO);
+            safeExecuteAction(charIDToTypeID("slct"), desc2, getDialogModeNO());
             
             log("マスク境界取得成功");
             return {
@@ -496,14 +796,26 @@ function resizeCanvasAndPosition(doc, settings) {
         // 必要なスケールを計算
         var scale = 1.0;
         if (settings.autoFit) {
+            // 左右マージンを考慮した最大幅
             var maxWidth = settings.width - (settings.sideMargin * 2);
             var scaleX = maxWidth / maskBounds.width;
             
-            var maxHeight = settings.height - settings.bottomMargin;
+            // 配置パターンに応じた最大高さの計算
+            var maxHeight;
+            if (settings.positioning === "bottom-top") {
+                // bottom-topパターン: 上部と下部の両マージンを考慮
+                maxHeight = settings.height - settings.topMargin - settings.bottomMargin;
+                log("bottom-topパターン: 最大高さ = " + maxHeight + "px (全体" + settings.height + " - 上部" + settings.topMargin + " - 下部" + settings.bottomMargin + ")");
+            } else {
+                // bottom-sideパターン: 下部マージンのみ考慮
+                maxHeight = settings.height - settings.bottomMargin;
+                log("bottom-sideパターン: 最大高さ = " + maxHeight + "px (全体" + settings.height + " - 下部" + settings.bottomMargin + ")");
+            }
+            
             var scaleY = maxHeight / maskBounds.height;
             
             scale = Math.min(scaleX, scaleY);
-            log("スケール: " + scale);
+            log("スケール計算: X=" + scaleX.toFixed(3) + ", Y=" + scaleY.toFixed(3) + " → 最終=" + scale.toFixed(3));
         }
         
         // 画像をリサイズ
@@ -521,12 +833,53 @@ function resizeCanvasAndPosition(doc, settings) {
             AnchorPosition.TOPLEFT
         );
         
-        // 画像を配置
-        var targetX = (settings.width - maskBounds.width) / 2;
-        var targetY = settings.height - settings.bottomMargin - maskBounds.height;
+        // 画像を配置（プリセットに応じて配置方法を決定）
+        var targetX, targetY;
+        
+        // 現在のマスク位置をログ出力
+        log("現在のマスク位置: left=" + maskBounds.left + ", top=" + maskBounds.top + ", width=" + maskBounds.width + ", height=" + maskBounds.height);
+        log("キャンバスサイズ: " + settings.width + "×" + settings.height + "px");
+        log("配置設定: positioning=" + settings.positioning + ", topMargin=" + settings.topMargin + ", bottomMargin=" + settings.bottomMargin + ", sideMargin=" + settings.sideMargin);
+        
+        // プリセットの配置方式を確認
+        if (settings.positioning === "bottom-top") {
+            // パターン2: 下部マージン + 上部マージン（Y軸中央配置）
+            var availableHeight = settings.height - settings.topMargin - settings.bottomMargin;
+            targetY = settings.topMargin + (availableHeight - maskBounds.height) / 2;
+            targetX = (settings.width - maskBounds.width) / 2;  // X軸は常に中央
+            log("配置パターン: 下部＋上部マージン");
+            log("  利用可能高さ: " + availableHeight + "px (キャンバス" + settings.height + " - 上部" + settings.topMargin + " - 下部" + settings.bottomMargin + ")");
+            log("  目標Y: " + targetY + " (上部" + settings.topMargin + " + 中央配置" + ((availableHeight - maskBounds.height) / 2) + ")");
+            log("  目標X: " + targetX + " (X軸中央)");
+        } else {
+            // パターン1: 下部マージン + 左右マージン（デフォルト）
+            targetY = settings.height - settings.bottomMargin - maskBounds.height;
+            
+            // 左右マージンを考慮したX位置計算
+            if (settings.sideMargin && settings.sideMargin > 0) {
+                var maxWidth = settings.width - (settings.sideMargin * 2);
+                if (maskBounds.width <= maxWidth) {
+                    // マージン内に収まる場合は中央配置
+                    targetX = (settings.width - maskBounds.width) / 2;
+                } else {
+                    // マージンを超える場合（スケールで調整済みのはず）
+                    targetX = settings.sideMargin;
+                }
+            } else {
+                targetX = (settings.width - maskBounds.width) / 2;
+            }
+            
+            log("配置パターン: 下部＋左右マージン");
+            log("  目標Y: " + targetY + " (キャンバス" + settings.height + " - 下部" + settings.bottomMargin + " - マスク高" + maskBounds.height + ")");
+            log("  目標X: " + targetX + " (左右マージン: " + (settings.sideMargin || 0) + "px)");
+        }
         
         var deltaX = targetX - maskBounds.left;
         var deltaY = targetY - maskBounds.top;
+        
+        log("移動量: deltaX=" + deltaX + ", deltaY=" + deltaY);
+        log("移動前マスク位置: (" + maskBounds.left + ", " + maskBounds.top + ")");
+        log("移動後予定位置: (" + targetX + ", " + targetY + ")");
         
         doc.activeLayer.translate(deltaX, deltaY);
         
@@ -563,63 +916,68 @@ function createShadow(doc, settings) {
         
         log("影レイヤー作成完了");
         
-        // 下部境界のみをぼかすための部分的なぼかし処理
+        // グラデーション影効果（上部シャープ、下部ぼかし）
         try {
-            log("下部境界ぼかし開始");
-            
-            // マスクチャンネルを選択
-            var desc = new ActionDescriptor();
-            var ref = new ActionReference();
-            ref.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
-            desc.putReference(charIDToTypeID("null"), ref);
-            executeAction(charIDToTypeID("slct"), desc, DialogModes.NO);
+            log("グラデーション影効果開始");
             
             // マスクの境界を取得
             var maskBounds = doc.activeLayer.bounds;
-            var canvasHeight = doc.height;
-            var canvasWidth = doc.width;
+            var shadowHeight = maskBounds[3].value - maskBounds[1].value;
+            var shadowTop = maskBounds[1].value;
+            var shadowBottom = maskBounds[3].value;
             
-            // 下部30%の領域のみを選択範囲として作成
-            var blurHeight = settings.shadowBlur * 2; // ぼかし領域の高さ
-            var selectionTop = maskBounds[3] - blurHeight; // 下端からぼかし高さ分上
-            var selectionBottom = canvasHeight;
-            var selectionLeft = 0;
-            var selectionRight = canvasWidth;
+            // 段階的ぼかし処理（上から下へ徐々にぼかしを強くする）
+            var numberOfSteps = 5; // ぼかしステップ数
+            var stepHeight = shadowHeight / numberOfSteps;
             
-            // 矩形選択範囲を作成（下部領域）
-            var selectionArray = [
-                [selectionLeft, selectionTop],
-                [selectionRight, selectionTop], 
-                [selectionRight, selectionBottom],
-                [selectionLeft, selectionBottom]
-            ];
-            doc.selection.select(selectionArray, SelectionType.REPLACE, 0, false);
+            for (var step = 0; step < numberOfSteps; step++) {
+                // 各段階の選択範囲を計算（下から上へ処理）
+                var stepTop = shadowTop + (step * stepHeight);
+                var stepBottom = shadowBottom;
+                
+                // 段階的なぼかし強度（下に向かうほど強く）
+                var blurStrength = (settings.shadowBlur * (step + 1)) / numberOfSteps;
+                
+                log("ステップ " + (step + 1) + ": " + Math.round(blurStrength) + "px ぼかし");
+                
+                // この段階の選択範囲を作成
+                var selectionArray = [
+                    [maskBounds[0].value, stepTop],
+                    [maskBounds[2].value, stepTop], 
+                    [maskBounds[2].value, stepBottom],
+                    [maskBounds[0].value, stepBottom]
+                ];
+                doc.selection.select(selectionArray, SelectionType.REPLACE, 0, false);
+                
+                // 選択範囲をマスクと交差させる
+                var desc = new ActionDescriptor();
+                var ref = new ActionReference();
+                ref.putProperty(charIDToTypeID("Chnl"), charIDToTypeID("fsel"));
+                desc.putReference(charIDToTypeID("null"), ref);
+                var ref2 = new ActionReference();
+                ref2.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
+                desc.putReference(charIDToTypeID("With"), ref2);
+                var idIntr = charIDToTypeID("Intr");
+                desc.putEnumerated(charIDToTypeID("T   "), charIDToTypeID("Slct"), idIntr);
+                safeExecuteAction(charIDToTypeID("setd"), desc, getDialogModeNO());
+                
+                // この段階でガウシアンブラーを適用
+                if (blurStrength > 0.5) {
+                    var idGsnB = charIDToTypeID("GsnB");
+                    var desc2 = new ActionDescriptor();
+                    var idRds = charIDToTypeID("Rds ");
+                    desc2.putUnitDouble(idRds, charIDToTypeID("#Pxl"), blurStrength);
+                    safeExecuteAction(idGsnB, desc2, getDialogModeNO());
+                }
+                
+                // 選択範囲を解除
+                doc.selection.deselect();
+            }
             
-            // 選択範囲にフェザーを適用（境界をなじませる）
-            doc.selection.feather(settings.shadowBlur / 4);
-            
-            // 選択範囲内でガウシアンブラーを適用
-            var blurRadius = settings.shadowBlur;
-            var idGsnB = charIDToTypeID("GsnB");
-            var desc2 = new ActionDescriptor();
-            var idRds = charIDToTypeID("Rds ");
-            desc2.putUnitDouble(idRds, charIDToTypeID("#Pxl"), blurRadius);
-            executeAction(idGsnB, desc2, DialogModes.NO);
-            
-            // 選択範囲を解除
-            doc.selection.deselect();
-            
-            // RGBチャンネルに戻す
-            var desc3 = new ActionDescriptor();
-            var ref2 = new ActionReference();
-            ref2.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("RGB "));
-            desc3.putReference(charIDToTypeID("null"), ref2);
-            executeAction(charIDToTypeID("slct"), desc3, DialogModes.NO);
-            
-            log("下部境界ぼかし適用完了: " + blurRadius + "px（下部領域のみ）");
+            log("グラデーション影効果完了: 上部シャープ → 下部" + settings.shadowBlur + "px ぼかし");
             
         } catch (e) {
-            log("下部境界ぼかしエラー: " + e.toString());
+            log("グラデーション影効果エラー: " + e.toString());
             log("フォールバック: 全体ぼかしを適用");
             
             // エラー時は従来の全体ぼかしにフォールバック
@@ -629,9 +987,9 @@ function createShadow(doc, settings) {
                 var desc2 = new ActionDescriptor();
                 var idRds = charIDToTypeID("Rds ");
                 desc2.putUnitDouble(idRds, charIDToTypeID("#Pxl"), blurRadius);
-                executeAction(idGsnB, desc2, DialogModes.NO);
+                safeExecuteAction(idGsnB, desc2, getDialogModeNO());
             } catch (fallbackError) {
-                log("フォールバックぼかしもエラー: " + fallbackError.toString());
+                log("フォールバック全体ぼかしもエラー: " + fallbackError.toString());
             }
         }
         
@@ -655,7 +1013,7 @@ function createShadow(doc, settings) {
             desc5.putList(idInpt, list2);
             list.putObject(charIDToTypeID("LvlA"), desc5);
             desc4.putList(idAdjs, list);
-            executeAction(idLvls, desc4, DialogModes.NO);
+            safeExecuteAction(idLvls, desc4, getDialogModeNO());
             
             log("レベル補正適用完了: ハイライト " + settings.shadowHighlight);
             
@@ -738,7 +1096,8 @@ function savePSD(doc, path) {
 // ========== メイン処理 ==========
 function main() {
     try {
-        app.displayDialogs = DialogModes.NO;
+        // DialogModes互換性チェック
+        safeSetDisplayDialogs();
         app.preferences.rulerUnits = Units.PIXELS;
         
         log("========== Photoshop 統合処理開始 ==========");
